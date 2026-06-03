@@ -29,6 +29,6 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add verification-code.txt
+          git add gmail_email.txt
           git commit -m "Save latest verification code" || echo "No changes"
           git push
