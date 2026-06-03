@@ -6,7 +6,7 @@ const recoveryEmail = process.env.MS_RECOVERY_EMAIL;
 const githubToken = process.env.TOKEN;
 
 const REPO_OWNER = "monitoroutlookapi";
-const REPO_NAME = "monitor1";
+const REPO_NAME = "shinji_morita";
 const WAIT_WORKFLOW_NAME = "wait for me";
 
 if (!email || !password || !recoveryEmail) {
