@@ -57,7 +57,7 @@ async function main() {
     throw new Error("No 6 digit code found in latest matching email");
   }
 
-  fs.writeFileSync("verification-code.txt", match[0] + "\n");
+  fs.writeFileSync("gmail_email.txt", match[0] + "\n");
 
   console.log(`Saved code to verification-code.txt`);
 }
