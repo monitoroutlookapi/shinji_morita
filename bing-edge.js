@@ -3,18 +3,16 @@ const { chromium } = require("playwright");
 const email = process.env.MS_EMAIL;
 const password = process.env.MS_PASSWORD;
 const recoveryEmail = process.env.MS_RECOVERY_EMAIL;
-const githubToken = process.env.TOKEN;
-
-const REPO_OWNER = "monitoroutlookapi";
-const REPO_NAME = "shinji_morita";
-const WAIT_WORKFLOW_NAME = "wait for me";
+const mailAddress = process.env.MAIL_ADDRESS;
+const mailPassword = process.env.MAIL_PASSWORD;
+const targetSubject = process.env.TARGET_SUBJECT || "Personal Microsoft account security code";
 
 if (!email || !password || !recoveryEmail) {
   throw new Error("Missing MS_EMAIL, MS_PASSWORD, or MS_RECOVERY_EMAIL");
 }
 
-if (!githubToken) {
-  throw new Error("Missing TOKEN");
+if (!mailAddress || !mailPassword) {
+  throw new Error("Missing MAIL_ADDRESS or MAIL_PASSWORD");
 }
 
 async function snap(page, name) {
@@ -50,141 +48,69 @@ async function clickPrimaryButton(page, label) {
   await btn.click();
 }
 
-async function triggerWaitWorkflow() {
-  console.log(`Triggering workflow: "${WAIT_WORKFLOW_NAME}"`);
-
-  const listRes = await fetch(
-    `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows`,
-    {
-      headers: {
-        Authorization: `Bearer ${githubToken}`,
-        Accept: "application/vnd.github+json",
-      },
-    }
-  );
-
-  const listData = await listRes.json();
-  const workflow = listData.workflows.find(
-    (w) => w.name.toLowerCase() === WAIT_WORKFLOW_NAME.toLowerCase()
-  );
-
-  if (!workflow) {
-    throw new Error(`Could not find workflow named "${WAIT_WORKFLOW_NAME}"`);
-  }
-
-  console.log(`Found workflow ID: ${workflow.id}`);
-
-  const beforeTrigger = new Date().toISOString();
-
-  const triggerRes = await fetch(
-    `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows/${workflow.id}/dispatches`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${githubToken}`,
-        Accept: "application/vnd.github+json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ ref: "main" }),
-    }
-  );
-
-  if (triggerRes.status !== 204) {
-    const errText = await triggerRes.text();
-    throw new Error(`Failed to trigger workflow: ${triggerRes.status} ${errText}`);
-  }
-
-  console.log("Workflow triggered. Waiting for run to appear...");
-
-  let runId = null;
-  for (let i = 0; i < 20; i++) {
-    await sleep(5000);
-
-    const runsRes = await fetch(
-      `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/workflows/${workflow.id}/runs?per_page=5`,
-      {
-        headers: {
-          Authorization: `Bearer ${githubToken}`,
-          Accept: "application/vnd.github+json",
-        },
-      }
-    );
-
-    const runsData = await runsRes.json();
-    const newRun = runsData.workflow_runs.find(
-      (r) => new Date(r.created_at) >= new Date(beforeTrigger)
-    );
-
-    if (newRun) {
-      runId = newRun.id;
-      console.log(`New run found: ID ${runId}`);
-      break;
-    }
-  }
-
-  if (!runId) {
-    throw new Error("Could not find the triggered workflow run after polling.");
-  }
-
-  return runId;
-}
-
-async function waitForWorkflowRun(runId) {
-  console.log(`Waiting for workflow run ${runId} to complete...`);
-
-  for (let i = 0; i < 60; i++) {
-    await sleep(15000);
-
-    const res = await fetch(
-      `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/runs/${runId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${githubToken}`,
-          Accept: "application/vnd.github+json",
-        },
-      }
-    );
-
-    const data = await res.json();
-    console.log(`Run status: ${data.status} / conclusion: ${data.conclusion}`);
-
-    if (data.status === "completed") {
-      console.log(`Workflow run completed with conclusion: ${data.conclusion}`);
-      return data.conclusion;
-    }
-  }
-
-  throw new Error("Timed out waiting for workflow run to complete (15 min).");
-}
-
-async function readCodeFromRepo() {
-  console.log("Reading gmail_email.txt from repo...");
-
-  const res = await fetch(
-    `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/gmail_email.txt`,
-    {
-      headers: {
-        Authorization: `Bearer ${githubToken}`,
-        Accept: "application/vnd.github+json",
-      },
-    }
-  );
-
+async function mailRequest(path, options = {}) {
+  const res = await fetch(`https://api.mail.tm${path}`, options);
   if (!res.ok) {
-    throw new Error(`Could not read gmail_email.txt: ${res.status} ${await res.text()}`);
+    const text = await res.text();
+    throw new Error(`mail.tm ${res.status} ${res.statusText}: ${text}`);
   }
-
-  const data = await res.json();
-  const code = Buffer.from(data.content, "base64").toString("utf-8").trim();
-  console.log(`Got verification code: ${code}`);
-  return code;
+  return res.json();
 }
 
-// Reads current body, dismisses any interstitial screens, returns final body text
+// Poll mail.tm until the verification code email arrives, then return the 6-digit code
+async function fetchVerificationCode() {
+  console.log("Logging in to mail.tm...");
+
+  const login = await mailRequest("/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ address: mailAddress, password: mailPassword }),
+  });
+
+  const token = login.token;
+
+  // Poll up to 10 minutes (40 attempts x 15s)
+  for (let i = 0; i < 40; i++) {
+    console.log(`Checking inbox for code... attempt ${i + 1}/40`);
+
+    const messages = await mailRequest("/messages", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const matching = messages["hydra:member"]
+      .filter(msg => msg.subject && msg.subject.includes(targetSubject))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    if (matching.length > 0) {
+      const latest = await mailRequest(`/messages/${matching[0].id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const content = [
+        latest.subject || "",
+        latest.intro || "",
+        latest.text || "",
+        latest.html ? latest.html.join("\n") : "",
+      ].join("\n");
+
+      const match = content.match(/\b\d{6}\b/);
+
+      if (match) {
+        console.log(`Found verification code: ${match[0]}`);
+        return match[0];
+      }
+    }
+
+    await sleep(15000);
+  }
+
+  throw new Error("Timed out waiting for verification code email (10 min).");
+}
+
+// Dismiss any interstitial screens (quick note, stay signed in)
 async function dismissInterstitials(page) {
   let body = await page.locator("body").innerText().catch(() => "");
 
-  // "Quick note about your Microsoft account" — click OK
   if (/quick note about your Microsoft account/i.test(body)) {
     console.log("Detected 'Quick note' screen. Clicking OK...");
     await clickText(page, "OK", true);
@@ -193,7 +119,6 @@ async function dismissInterstitials(page) {
     body = await page.locator("body").innerText().catch(() => "");
   }
 
-  // "Stay signed in?" — click Yes
   if (/Stay signed in/i.test(body)) {
     console.log("Detected 'Stay signed in?' screen. Clicking Yes...");
     await clickText(page, "Yes", true);
@@ -271,10 +196,7 @@ function sleep(ms) {
     // Dismiss quick note and/or stay signed in if they appear right after password
     body = await dismissInterstitials(page);
 
-    // Check if we are now past login (no more verification needed)
-    if (!/Help us protect your account|verify your identity|Email/i.test(body)) {
-      console.log("Login complete — no verification required.");
-    } else {
+    if (/Help us protect your account|verify your identity|Email/i.test(body)) {
       // Verification required flow
       console.log("6. Choosing email verification option");
       await clickText(page, "Email", true);
@@ -308,20 +230,10 @@ function sleep(ms) {
       await page.waitForTimeout(7000);
       await snap(page, "10-after-send-code-click.png");
 
-      console.log("9. Triggering 'wait for me' workflow...");
-      const runId = await triggerWaitWorkflow();
+      console.log("9. Waiting for verification code from mail.tm...");
+      const verificationCode = await fetchVerificationCode();
 
-      console.log("10. Waiting for 'wait for me' workflow to finish...");
-      const conclusion = await waitForWorkflowRun(runId);
-
-      if (conclusion !== "success") {
-        throw new Error(`'wait for me' workflow ended with: ${conclusion}`);
-      }
-
-      console.log("11. Reading verification code from gmail_email.txt...");
-      const verificationCode = await readCodeFromRepo();
-
-      console.log("12. Entering verification code on Microsoft login page...");
+      console.log("10. Entering verification code on Microsoft login page...");
       const codeBox = page
         .locator(
           'input#iOttText, input[name="iOttText"], input[placeholder*="code"], input[type="tel"], input[type="number"], input[type="text"]'
@@ -334,7 +246,7 @@ function sleep(ms) {
       await codeBox.type(verificationCode, { delay: 80 });
       await snap(page, "11-code-entered.png");
 
-      console.log("13. Submitting verification code...");
+      console.log("11. Submitting verification code...");
       await clickPrimaryButton(page, "verify code");
       await page.waitForTimeout(7000);
       await snap(page, "12-after-code-submit.png");
@@ -343,17 +255,19 @@ function sleep(ms) {
       await dismissInterstitials(page);
 
       console.log("Logged in via verification code flow.");
+    } else {
+      console.log("Login complete — no verification required.");
     }
 
     // --- BING SEARCH ---
-    console.log("14. Getting random words...");
+    console.log("12. Getting random words...");
     const word1Res = await fetch("https://random-word-api.herokuapp.com/word");
     const word2Res = await fetch("https://random-word-api.herokuapp.com/word");
     const [word1] = await word1Res.json();
     const [word2] = await word2Res.json();
     const phrase = `${word1} ${word2}`;
 
-    console.log(`15. Navigating to Bing and searching: "${phrase}"`);
+    console.log(`13. Navigating to Bing and searching: "${phrase}"`);
     await page.goto("https://www.bing.com", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(3000);
     await snap(page, "14-bing-homepage.png");
