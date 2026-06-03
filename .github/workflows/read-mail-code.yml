@@ -1,0 +1,34 @@
+name: Read latest email code
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  read-code:
+    runs-on: ubuntu-latest
+
+    env:
+      MAIL_ADDRESS: ${{ secrets.MAIL_ADDRESS }}
+      MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+      TARGET_SUBJECT: "Personal Microsoft account security code"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Extract 6 digit code from latest matching email
+        run: node scripts/read-mailtm-code.js
+
+      - name: Commit code txt
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add verification-code.txt
+          git commit -m "Save latest verification code" || echo "No changes"
+          git push
