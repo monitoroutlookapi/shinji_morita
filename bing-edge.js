@@ -180,6 +180,31 @@ async function readCodeFromRepo() {
   return code;
 }
 
+// Reads current body, dismisses any interstitial screens, returns final body text
+async function dismissInterstitials(page) {
+  let body = await page.locator("body").innerText().catch(() => "");
+
+  // "Quick note about your Microsoft account" — click OK
+  if (/quick note about your Microsoft account/i.test(body)) {
+    console.log("Detected 'Quick note' screen. Clicking OK...");
+    await clickText(page, "OK", true);
+    await page.waitForTimeout(5000);
+    await snap(page, "interstitial-quick-note-ok.png");
+    body = await page.locator("body").innerText().catch(() => "");
+  }
+
+  // "Stay signed in?" — click Yes
+  if (/Stay signed in/i.test(body)) {
+    console.log("Detected 'Stay signed in?' screen. Clicking Yes...");
+    await clickText(page, "Yes", true);
+    await page.waitForTimeout(5000);
+    await snap(page, "interstitial-stay-signed-in-yes.png");
+    body = await page.locator("body").innerText().catch(() => "");
+  }
+
+  return body;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -236,21 +261,21 @@ function sleep(ms) {
     await snap(page, "06-after-password-submit.png");
 
     console.log("5. Checking what screen appeared after password...");
-    const body = await page.locator("body").innerText().catch(() => "");
+    let body = await page.locator("body").innerText().catch(() => "");
 
     if (/captcha|temporarily blocked/i.test(body)) {
       await snap(page, "error-security-block.png");
       throw new Error("Microsoft showed CAPTCHA or block screen.");
     }
 
-    if (/Stay signed in/i.test(body)) {
-      console.log("5a. 'Stay signed in?' screen detected. Clicking Yes...");
-      await clickText(page, "Yes", true);
-      await page.waitForTimeout(5000);
-      await snap(page, "07-stay-signed-in-yes.png");
-      console.log("Logged in via Stay signed in flow.");
+    // Dismiss quick note and/or stay signed in if they appear right after password
+    body = await dismissInterstitials(page);
 
-    } else if (/Help us protect your account|verify your identity|Email/i.test(body)) {
+    // Check if we are now past login (no more verification needed)
+    if (!/Help us protect your account|verify your identity|Email/i.test(body)) {
+      console.log("Login complete — no verification required.");
+    } else {
+      // Verification required flow
       console.log("6. Choosing email verification option");
       await clickText(page, "Email", true);
       await page.waitForTimeout(2000);
@@ -314,19 +339,10 @@ function sleep(ms) {
       await page.waitForTimeout(7000);
       await snap(page, "12-after-code-submit.png");
 
-      const bodyAfterCode = await page.locator("body").innerText().catch(() => "");
-      if (/Stay signed in/i.test(bodyAfterCode)) {
-        console.log("13a. 'Stay signed in?' appeared after code. Clicking Yes...");
-        await clickText(page, "Yes", true);
-        await page.waitForTimeout(5000);
-        await snap(page, "13-stay-signed-in-yes.png");
-      }
+      // Dismiss any interstitials after code submit too
+      await dismissInterstitials(page);
 
       console.log("Logged in via verification code flow.");
-
-    } else {
-      await snap(page, "error-unknown-screen.png");
-      throw new Error("Unknown screen after password submit.");
     }
 
     // --- BING SEARCH ---
