@@ -244,7 +244,6 @@ function sleep(ms) {
     }
 
     if (/Stay signed in/i.test(body)) {
-      // No verification needed
       console.log("5a. 'Stay signed in?' screen detected. Clicking Yes...");
       await clickText(page, "Yes", true);
       await page.waitForTimeout(5000);
@@ -252,7 +251,6 @@ function sleep(ms) {
       console.log("Logged in via Stay signed in flow.");
 
     } else if (/Help us protect your account|verify your identity|Email/i.test(body)) {
-      // Verification required
       console.log("6. Choosing email verification option");
       await clickText(page, "Email", true);
       await page.waitForTimeout(2000);
@@ -316,7 +314,6 @@ function sleep(ms) {
       await page.waitForTimeout(7000);
       await snap(page, "12-after-code-submit.png");
 
-      // Stay signed in may appear again after code submit
       const bodyAfterCode = await page.locator("body").innerText().catch(() => "");
       if (/Stay signed in/i.test(bodyAfterCode)) {
         console.log("13a. 'Stay signed in?' appeared after code. Clicking Yes...");
@@ -333,21 +330,14 @@ function sleep(ms) {
     }
 
     // --- BING SEARCH ---
-    const randomPhrases = [
-      "mountain trail",
-      "ocean sunset",
-      "coffee recipes",
-      "space telescope",
-      "forest walk",
-      "vintage clocks",
-      "northern lights",
-      "ancient ruins",
-      "cloud formation",
-      "desert bloom",
-    ];
-    const phrase = randomPhrases[Math.floor(Math.random() * randomPhrases.length)];
+    console.log("14. Getting random words...");
+    const word1Res = await fetch("https://random-word-api.herokuapp.com/word");
+    const word2Res = await fetch("https://random-word-api.herokuapp.com/word");
+    const [word1] = await word1Res.json();
+    const [word2] = await word2Res.json();
+    const phrase = `${word1} ${word2}`;
 
-    console.log(`14. Navigating to Bing and searching: "${phrase}"`);
+    console.log(`15. Navigating to Bing and searching: "${phrase}"`);
     await page.goto("https://www.bing.com", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(3000);
     await snap(page, "14-bing-homepage.png");
