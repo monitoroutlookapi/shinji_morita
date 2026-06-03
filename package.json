@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "bing": "node bing-edge.js"
+  },
+  "dependencies": {
+    "playwright": "^1.45.0"
+  }
+}
