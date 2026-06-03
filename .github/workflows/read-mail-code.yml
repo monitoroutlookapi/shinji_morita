@@ -1,4 +1,4 @@
-name: Read latest email code
+name: wait for me
 
 on:
   workflow_dispatch:
