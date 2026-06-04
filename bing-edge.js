@@ -57,7 +57,6 @@ async function mailRequest(path, options = {}) {
   return res.json();
 }
 
-// Poll mail.tm until the verification code email arrives, then return the 6-digit code
 async function fetchVerificationCode() {
   console.log("Logging in to mail.tm...");
 
@@ -69,7 +68,6 @@ async function fetchVerificationCode() {
 
   const token = login.token;
 
-  // Poll up to 10 minutes (40 attempts x 15s)
   for (let i = 0; i < 40; i++) {
     console.log(`Checking inbox for code... attempt ${i + 1}/40`);
 
@@ -107,27 +105,34 @@ async function fetchVerificationCode() {
   throw new Error("Timed out waiting for verification code email (10 min).");
 }
 
-// Dismiss any interstitial screens (quick note, stay signed in)
-async function dismissInterstitials(page) {
-  let body = await page.locator("body").innerText().catch(() => "");
+// Repeatedly dismiss all known interstitial screens until none remain
+async function dismissInterstitials(page, snapPrefix = "interstitial") {
+  for (let i = 0; i < 5; i++) {
+    const body = await page.locator("body").innerText().catch(() => "");
 
-  if (/quick note about your Microsoft account/i.test(body)) {
-    console.log("Detected 'Quick note' screen. Clicking OK...");
-    await clickText(page, "OK", true);
-    await page.waitForTimeout(5000);
-    await snap(page, "interstitial-quick-note-ok.png");
-    body = await page.locator("body").innerText().catch(() => "");
+    if (/quick note about your Microsoft account/i.test(body)) {
+      console.log("Detected 'Quick note' screen. Clicking OK...");
+      await snap(page, `${snapPrefix}-quick-note.png`);
+      // Try the OK button by text first, fall back to primary button
+      const clicked = await clickText(page, "OK");
+      if (!clicked) await clickPrimaryButton(page, "quick note OK");
+      await page.waitForTimeout(5000);
+      continue; // re-check after dismissing
+    }
+
+    if (/Stay signed in/i.test(body)) {
+      console.log("Detected 'Stay signed in?' screen. Clicking Yes...");
+      await snap(page, `${snapPrefix}-stay-signed-in.png`);
+      await clickText(page, "Yes", true);
+      await page.waitForTimeout(5000);
+      continue; // re-check after dismissing
+    }
+
+    // No more interstitials
+    return body;
   }
 
-  if (/Stay signed in/i.test(body)) {
-    console.log("Detected 'Stay signed in?' screen. Clicking Yes...");
-    await clickText(page, "Yes", true);
-    await page.waitForTimeout(5000);
-    await snap(page, "interstitial-stay-signed-in-yes.png");
-    body = await page.locator("body").innerText().catch(() => "");
-  }
-
-  return body;
+  return await page.locator("body").innerText().catch(() => "");
 }
 
 function sleep(ms) {
@@ -186,22 +191,23 @@ function sleep(ms) {
     await snap(page, "06-after-password-submit.png");
 
     console.log("5. Checking what screen appeared after password...");
-    let body = await page.locator("body").innerText().catch(() => "");
 
-    if (/captcha|temporarily blocked/i.test(body)) {
+    if (/captcha|temporarily blocked/i.test(
+      await page.locator("body").innerText().catch(() => "")
+    )) {
       await snap(page, "error-security-block.png");
       throw new Error("Microsoft showed CAPTCHA or block screen.");
     }
 
-    // Dismiss quick note and/or stay signed in if they appear right after password
-    body = await dismissInterstitials(page);
+    // Dismiss quick note / stay signed in — may appear multiple times in any order
+    let body = await dismissInterstitials(page, "after-password");
+    await snap(page, "07-after-interstitials.png");
 
     if (/Help us protect your account|verify your identity|Email/i.test(body)) {
-      // Verification required flow
       console.log("6. Choosing email verification option");
       await clickText(page, "Email", true);
       await page.waitForTimeout(2000);
-      await snap(page, "07-email-option-selected.png");
+      await snap(page, "08-email-option-selected.png");
 
       console.log("7. Typing recovery email");
       const recoveryBox = page
@@ -214,10 +220,10 @@ function sleep(ms) {
       await recoveryBox.click();
       await recoveryBox.fill("");
       await recoveryBox.type(recoveryEmail, { delay: 80 });
-      await snap(page, "08-recovery-email-filled.png");
+      await snap(page, "09-recovery-email-filled.png");
 
       console.log("8. Clicking Send code");
-      await snap(page, "09-before-send-code.png");
+      await snap(page, "10-before-send-code.png");
 
       const sendCodeBtn = page
         .locator('#iSelectProofAction, input[value="Send code"]')
@@ -228,7 +234,7 @@ function sleep(ms) {
       await sendCodeBtn.click({ force: true });
 
       await page.waitForTimeout(7000);
-      await snap(page, "10-after-send-code-click.png");
+      await snap(page, "11-after-send-code-click.png");
 
       console.log("9. Waiting for verification code from mail.tm...");
       const verificationCode = await fetchVerificationCode();
@@ -244,17 +250,17 @@ function sleep(ms) {
       await codeBox.click();
       await codeBox.fill("");
       await codeBox.type(verificationCode, { delay: 80 });
-      await snap(page, "11-code-entered.png");
+      await snap(page, "12-code-entered.png");
 
       console.log("11. Submitting verification code...");
       await clickPrimaryButton(page, "verify code");
       await page.waitForTimeout(7000);
-      await snap(page, "12-after-code-submit.png");
+      await snap(page, "13-after-code-submit.png");
 
       // Dismiss any interstitials after code submit too
-      await dismissInterstitials(page);
-
+      await dismissInterstitials(page, "after-code");
       console.log("Logged in via verification code flow.");
+
     } else {
       console.log("Login complete — no verification required.");
     }
