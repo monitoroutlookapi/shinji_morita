@@ -105,7 +105,7 @@ async function fetchVerificationCode() {
   throw new Error("Timed out waiting for verification code email (10 min).");
 }
 
-// Repeatedly dismiss all known interstitial screens until none remain
+// Dismiss quick note and stay signed in screens in a loop until none remain
 async function dismissInterstitials(page, snapPrefix = "interstitial") {
   for (let i = 0; i < 5; i++) {
     const body = await page.locator("body").innerText().catch(() => "");
@@ -113,11 +113,22 @@ async function dismissInterstitials(page, snapPrefix = "interstitial") {
     if (/quick note about your Microsoft account/i.test(body)) {
       console.log("Detected 'Quick note' screen. Clicking OK...");
       await snap(page, `${snapPrefix}-quick-note.png`);
-      // Try the OK button by text first, fall back to primary button
-      const clicked = await clickText(page, "OK");
-      if (!clicked) await clickPrimaryButton(page, "quick note OK");
+
+      // Try multiple selectors for the OK button
+      const okBtn = page.locator(
+        'button:has-text("OK"), input[value="OK"], #iNext, button#idSIButton9'
+      ).first();
+
+      if (await okBtn.isVisible().catch(() => false)) {
+        await okBtn.scrollIntoViewIfNeeded();
+        await okBtn.click({ force: true });
+      } else {
+        // Last resort: primary button
+        await clickPrimaryButton(page, "quick note OK");
+      }
+
       await page.waitForTimeout(5000);
-      continue; // re-check after dismissing
+      continue;
     }
 
     if (/Stay signed in/i.test(body)) {
@@ -125,7 +136,7 @@ async function dismissInterstitials(page, snapPrefix = "interstitial") {
       await snap(page, `${snapPrefix}-stay-signed-in.png`);
       await clickText(page, "Yes", true);
       await page.waitForTimeout(5000);
-      continue; // re-check after dismissing
+      continue;
     }
 
     // No more interstitials
@@ -133,6 +144,20 @@ async function dismissInterstitials(page, snapPrefix = "interstitial") {
   }
 
   return await page.locator("body").innerText().catch(() => "");
+}
+
+// Get a random word using wordnik-style approach with a fallback word list
+function getRandomWord() {
+  const words = [
+    "apple","brave","cloud","dream","eagle","flame","grace","honey",
+    "ivory","jewel","karma","lemon","magic","noble","ocean","pearl",
+    "quest","river","stone","tiger","ultra","vivid","wheat","xenon",
+    "youth","zebra","amber","blaze","coral","dusk","ember","frost",
+    "globe","haven","iris","jade","knoll","lunar","maple","nova",
+    "orbit","prism","quartz","ridge","solar","thorn","umbra","vale",
+    "winds","xylem","yield","zonal"
+  ];
+  return words[Math.floor(Math.random() * words.length)];
 }
 
 function sleep(ms) {
@@ -199,7 +224,7 @@ function sleep(ms) {
       throw new Error("Microsoft showed CAPTCHA or block screen.");
     }
 
-    // Dismiss quick note / stay signed in — may appear multiple times in any order
+    // Dismiss quick note / stay signed in — loop until all cleared
     let body = await dismissInterstitials(page, "after-password");
     await snap(page, "07-after-interstitials.png");
 
@@ -266,14 +291,8 @@ function sleep(ms) {
     }
 
     // --- BING SEARCH ---
-    console.log("12. Getting random words...");
-    const word1Res = await fetch("https://random-word-api.herokuapp.com/word");
-    const word2Res = await fetch("https://random-word-api.herokuapp.com/word");
-    const [word1] = await word1Res.json();
-    const [word2] = await word2Res.json();
-    const phrase = `${word1} ${word2}`;
-
-    console.log(`13. Navigating to Bing and searching: "${phrase}"`);
+    const phrase = `${getRandomWord()} ${getRandomWord()}`;
+    console.log(`12. Navigating to Bing and searching: "${phrase}"`);
     await page.goto("https://www.bing.com", { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(3000);
     await snap(page, "14-bing-homepage.png");
