@@ -1,6 +1,7 @@
 {
   "scripts": {
-    "bing": "node bing-edge.js"
+    "bing": "node bing-edge.js",
+    "bing-mobile": "node bing-edge-mobile.js"
   },
   "dependencies": {
     "playwright": "^1.45.0"
